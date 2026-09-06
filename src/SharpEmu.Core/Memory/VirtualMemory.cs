@@ -6,18 +6,51 @@ using SharpEmu.HLE;
 
 namespace SharpEmu.Core.Memory;
 
+/// <summary>
+/// Memória virtual do guest.
+///
+/// IMPORTANTE:
+/// - GuestRamSize = 26 GiB é a capacidade configurada do guest.
+/// - Não significa que 26 GiB de RAM física serão consumidos pelo host.
+/// - A memória de cada região é armazenada de forma esparsa.
+/// - Somente páginas realmente escritas são alocadas.
+/// </summary>
 public sealed class VirtualMemory : IVirtualMemory
 {
-    // Capacidade máxima de RAM virtual do convidado:
-    // 26 GiB = 26 * 1024^3 bytes.
-    public const ulong MaxGuestMemory = 26UL * 1024UL * 1024UL * 1024UL;
+    /// <summary>
+    /// Quantidade de RAM apresentada ao guest.
+    ///
+    /// 26 GiB = 26 * 1024^3 bytes.
+    /// </summary>
+    public const ulong GuestRamSize =
+        26UL * 1024UL * 1024UL * 1024UL;
 
-    // Páginas de 64 KiB.
+    /// <summary>
+    /// RAM em MiB.
+    /// </summary>
+    public const ulong GuestRamSizeMiB =
+        26UL * 1024UL;
+
+    /// <summary>
+    /// RAM em GiB.
+    /// </summary>
+    public const ulong GuestRamSizeGiB = 26UL;
+
+    /// <summary>
+    /// Tamanho das páginas utilizadas pelo backing store.
+    ///
+    /// 64 KiB reduz o número de entradas do dicionário
+    /// quando grandes quantidades de memória são utilizadas.
+    /// </summary>
     private const int PageSize = 64 * 1024;
 
     private readonly object _gate = new();
+
     private readonly List<MappedRegion> _regions = new();
 
+    /// <summary>
+    /// Remove todos os mapeamentos.
+    /// </summary>
     public void Clear()
     {
         lock (_gate)
@@ -26,6 +59,15 @@ public sealed class VirtualMemory : IVirtualMemory
         }
     }
 
+    /// <summary>
+    /// Mapeia uma região de memória virtual do guest.
+    ///
+    /// O endereço virtual NÃO é limitado a 26 GiB.
+    ///
+    /// Os 26 GiB representam a capacidade de RAM do guest,
+    /// enquanto o espaço de endereçamento virtual pode possuir
+    /// endereços muito maiores.
+    /// </summary>
     public void Map(
         ulong virtualAddress,
         ulong memorySize,
@@ -47,38 +89,72 @@ public sealed class VirtualMemory : IVirtualMemory
                 "File size cannot exceed memory size.");
         }
 
-        var endAddress = checked(virtualAddress + memorySize);
+        ulong endAddress;
 
-        // Impede que o espaço virtual ultrapasse o limite configurado.
-        if (endAddress > MaxGuestMemory)
+        try
         {
-            throw new NotSupportedException(
-                $"Virtual memory cannot exceed {MaxGuestMemory / (1024UL * 1024UL * 1024UL)} GiB.");
+            endAddress = checked(
+                virtualAddress + memorySize);
+        }
+        catch (OverflowException)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(memorySize),
+                "Virtual memory address range overflowed.");
         }
 
         lock (_gate)
         {
-            var insertionIndex = FindInsertionIndex(virtualAddress);
+            var insertionIndex =
+                FindInsertionIndex(virtualAddress);
 
-            if ((insertionIndex > 0 &&
-                 virtualAddress < _regions[insertionIndex - 1].EndAddress) ||
-                (insertionIndex < _regions.Count &&
-                 endAddress > _regions[insertionIndex].Region.VirtualAddress))
+            /*
+             * Verifica sobreposição com a região anterior.
+             */
+            if (insertionIndex > 0 &&
+                virtualAddress <
+                _regions[insertionIndex - 1].EndAddress)
             {
                 throw new InvalidOperationException(
                     "Attempted to map an overlapping virtual memory region.");
             }
 
-            var backingMemory = new SparseMemory(memorySize);
-
-            // Copia somente os dados existentes no arquivo.
-            if (!fileData.IsEmpty)
+            /*
+             * Verifica sobreposição com a próxima região.
+             */
+            if (insertionIndex < _regions.Count &&
+                endAddress >
+                _regions[insertionIndex]
+                    .Region
+                    .VirtualAddress)
             {
-                backingMemory.Write(0, fileData);
+                throw new InvalidOperationException(
+                    "Attempted to map an overlapping virtual memory region.");
             }
 
-            _regions.Insert(
-                insertionIndex,
+            /*
+             * Não criamos:
+             *
+             *     new byte[(int)memorySize]
+             *
+             * porque uma região pode ser muito maior que 2 GiB.
+             *
+             * Em vez disso utilizamos memória esparsa.
+             */
+            var backingMemory =
+                new SparseMemory(memorySize);
+
+            /*
+             * Carrega os dados iniciais do ELF/arquivo.
+             */
+            if (!fileData.IsEmpty)
+            {
+                backingMemory.Write(
+                    0,
+                    fileData);
+            }
+
+            var mappedRegion =
                 new MappedRegion(
                     new VirtualMemoryRegion(
                         virtualAddress,
@@ -87,29 +163,49 @@ public sealed class VirtualMemory : IVirtualMemory
                         (ulong)fileData.Length,
                         protection),
                     endAddress,
-                    backingMemory));
+                    backingMemory);
+
+            _regions.Insert(
+                insertionIndex,
+                mappedRegion);
         }
     }
 
-    public IReadOnlyList<VirtualMemoryRegion> SnapshotRegions()
+    /// <summary>
+    /// Retorna uma cópia dos mapeamentos atuais.
+    /// </summary>
+    public IReadOnlyList<VirtualMemoryRegion>
+        SnapshotRegions()
     {
         lock (_gate)
         {
-            var snapshot = new VirtualMemoryRegion[_regions.Count];
+            var snapshot =
+                new VirtualMemoryRegion[_regions.Count];
 
-            for (var i = 0; i < _regions.Count; i++)
+            for (var i = 0;
+                 i < _regions.Count;
+                 i++)
             {
-                snapshot[i] = _regions[i].Region;
+                snapshot[i] =
+                    _regions[i].Region;
             }
 
             return snapshot;
         }
     }
 
+    /// <summary>
+    /// Lê memória do guest.
+    /// </summary>
     public bool TryRead(
         ulong virtualAddress,
         Span<byte> destination)
     {
+        if (destination.Length == 0)
+        {
+            return true;
+        }
+
         lock (_gate)
         {
             if (!TryValidateRange(
@@ -130,10 +226,18 @@ public sealed class VirtualMemory : IVirtualMemory
         }
     }
 
+    /// <summary>
+    /// Escreve memória do guest.
+    /// </summary>
     public bool TryWrite(
         ulong virtualAddress,
         ReadOnlySpan<byte> source)
     {
+        if (source.Length == 0)
+        {
+            return true;
+        }
+
         lock (_gate)
         {
             if (!TryValidateRange(
@@ -151,6 +255,10 @@ public sealed class VirtualMemory : IVirtualMemory
                 regionIndex);
         }
 
+        /*
+         * O write watch deve acontecer fora do lock
+         * para evitar manter o lock durante callbacks.
+         */
         if (GuestWriteWatch.Armed)
         {
             GuestWriteWatch.Check(
@@ -161,6 +269,10 @@ public sealed class VirtualMemory : IVirtualMemory
         return true;
     }
 
+    /// <summary>
+    /// Valida se uma faixa inteira está mapeada e possui
+    /// a proteção necessária.
+    /// </summary>
     private bool TryValidateRange(
         ulong virtualAddress,
         int length,
@@ -168,44 +280,65 @@ public sealed class VirtualMemory : IVirtualMemory
         out int regionIndex)
     {
         regionIndex =
-            FindContainingRegionIndex(virtualAddress);
+            FindContainingRegionIndex(
+                virtualAddress);
 
         if (regionIndex < 0)
         {
             return false;
         }
 
-        var currentAddress = virtualAddress;
-        var remaining = length;
-        var currentIndex = regionIndex;
+        if (length == 0)
+        {
+            return true;
+        }
 
-        while (true)
+        ulong currentAddress =
+            virtualAddress;
+
+        ulong remaining =
+            (ulong)length;
+
+        var currentIndex =
+            regionIndex;
+
+        while (remaining > 0)
         {
             if (currentIndex >= _regions.Count)
             {
                 return false;
             }
 
-            var region = _regions[currentIndex];
+            var region =
+                _regions[currentIndex];
 
-            if (currentAddress < region.Region.VirtualAddress ||
-                currentAddress >= region.EndAddress ||
-                (region.Region.Protection & requiredProtection) == 0)
+            /*
+             * O endereço precisa estar dentro da região.
+             */
+            if (currentAddress <
+                    region.Region.VirtualAddress ||
+                currentAddress >=
+                    region.EndAddress)
             {
                 return false;
             }
 
-            if (remaining == 0)
+            /*
+             * Verifica proteção.
+             */
+            if ((region.Region.Protection &
+                 requiredProtection) == 0)
             {
-                return true;
+                return false;
             }
 
             var available =
-                region.EndAddress - currentAddress;
+                region.EndAddress -
+                currentAddress;
 
             var chunkLength =
-                (int)Math.Min(
-                    (ulong)remaining,
+                Math.Min(
+                    remaining,
                     available);
 
             remaining -= chunkLength;
@@ -215,54 +348,105 @@ public sealed class VirtualMemory : IVirtualMemory
                 return true;
             }
 
-            currentAddress += (ulong)chunkLength;
+            currentAddress +=
+                chunkLength;
+
             currentIndex++;
         }
+
+        return true;
     }
 
+    /// <summary>
+    /// Localiza a região que contém um endereço virtual.
+    /// </summary>
     private int FindContainingRegionIndex(
         ulong virtualAddress)
     {
         var insertionIndex =
-            FindInsertionIndex(virtualAddress);
+            FindInsertionIndex(
+                virtualAddress);
 
+        /*
+         * Endereço coincide exatamente com
+         * o início de uma região.
+         */
         if (insertionIndex < _regions.Count &&
-            _regions[insertionIndex].Region.VirtualAddress ==
+            _regions[insertionIndex]
+                .Region
+                .VirtualAddress ==
             virtualAddress)
         {
             return insertionIndex;
         }
 
+        /*
+         * Caso contrário, a região candidata
+         * é a anterior.
+         */
         var candidateIndex =
             insertionIndex - 1;
 
-        return candidateIndex >= 0 &&
-               virtualAddress <
-               _regions[candidateIndex].EndAddress
+        if (candidateIndex < 0)
+        {
+            return -1;
+        }
+
+        return virtualAddress <
+               _regions[candidateIndex]
+                   .EndAddress
             ? candidateIndex
             : -1;
     }
 
+    /// <summary>
+    /// Copia dados das regiões para o buffer do host.
+    /// </summary>
     private void CopyFromRegions(
         ulong virtualAddress,
         Span<byte> destination,
         int regionIndex)
     {
         var copied = 0;
-        var currentAddress = virtualAddress;
+
+        ulong currentAddress =
+            virtualAddress;
 
         while (copied < destination.Length)
         {
-            var region = _regions[regionIndex++];
+            if (regionIndex >= _regions.Count)
+            {
+                throw new InvalidOperationException(
+                    "Memory range became invalid while reading.");
+            }
+
+            var region =
+                _regions[regionIndex];
 
             var regionOffset =
-                currentAddress -
-                region.Region.VirtualAddress;
+                checked(
+                    currentAddress -
+                    region.Region.VirtualAddress);
+
+            var available =
+                region.Region.MemorySize -
+                regionOffset;
+
+            var requested =
+                (ulong)(
+                    destination.Length -
+                    copied);
 
             var chunkLength =
                 (int)Math.Min(
-                    (ulong)(destination.Length - copied),
-                    region.Region.MemorySize - regionOffset);
+                    available,
+                    requested);
+
+            if (chunkLength <= 0)
+            {
+                throw new InvalidOperationException(
+                    "Invalid memory region while reading.");
+            }
 
             region.BackingMemory.Read(
                 regionOffset,
@@ -271,30 +455,69 @@ public sealed class VirtualMemory : IVirtualMemory
                     chunkLength));
 
             copied += chunkLength;
-            currentAddress += (ulong)chunkLength;
+
+            currentAddress +=
+                (ulong)chunkLength;
+
+            /*
+             * Se ainda há dados, passamos
+             * para a próxima região.
+             */
+            if (copied < destination.Length)
+            {
+                regionIndex++;
+            }
         }
     }
 
+    /// <summary>
+    /// Copia dados do host para as regiões do guest.
+    /// </summary>
     private void CopyToRegions(
         ulong virtualAddress,
         ReadOnlySpan<byte> source,
         int regionIndex)
     {
         var copied = 0;
-        var currentAddress = virtualAddress;
+
+        ulong currentAddress =
+            virtualAddress;
 
         while (copied < source.Length)
         {
-            var region = _regions[regionIndex++];
+            if (regionIndex >= _regions.Count)
+            {
+                throw new InvalidOperationException(
+                    "Memory range became invalid while writing.");
+            }
+
+            var region =
+                _regions[regionIndex];
 
             var regionOffset =
-                currentAddress -
-                region.Region.VirtualAddress;
+                checked(
+                    currentAddress -
+                    region.Region.VirtualAddress);
+
+            var available =
+                region.Region.MemorySize -
+                regionOffset;
+
+            var requested =
+                (ulong)(
+                    source.Length -
+                    copied);
 
             var chunkLength =
                 (int)Math.Min(
-                    (ulong)(source.Length - copied),
-                    region.Region.MemorySize - regionOffset);
+                    available,
+                    requested);
+
+            if (chunkLength <= 0)
+            {
+                throw new InvalidOperationException(
+                    "Invalid memory region while writing.");
+            }
 
             region.BackingMemory.Write(
                 regionOffset,
@@ -303,10 +526,21 @@ public sealed class VirtualMemory : IVirtualMemory
                     chunkLength));
 
             copied += chunkLength;
-            currentAddress += (ulong)chunkLength;
+
+            currentAddress +=
+                (ulong)chunkLength;
+
+            if (copied < source.Length)
+            {
+                regionIndex++;
+            }
         }
     }
 
+    /// <summary>
+    /// Pesquisa binária para localizar a posição
+    /// de uma região.
+    /// </summary>
     private int FindInsertionIndex(
         ulong virtualAddress)
     {
@@ -316,13 +550,16 @@ public sealed class VirtualMemory : IVirtualMemory
         while (lower < upper)
         {
             var middle =
-                lower + ((upper - lower) / 2);
+                lower +
+                ((upper - lower) / 2);
 
             if (_regions[middle]
                     .Region
-                    .VirtualAddress < virtualAddress)
+                    .VirtualAddress <
+                virtualAddress)
             {
-                lower = middle + 1;
+                lower =
+                    middle + 1;
             }
             else
             {
@@ -339,24 +576,40 @@ public sealed class VirtualMemory : IVirtualMemory
         SparseMemory BackingMemory);
 
     /// <summary>
-    /// Memória esparsa.
+    /// Backing store de memória esparsa.
     ///
-    /// O convidado pode possuir um espaço de até 26 GiB,
-    /// mas somente as páginas efetivamente acessadas
-    /// são alocadas no host.
+    /// Uma região pode representar dezenas de GiB,
+    /// mas páginas não utilizadas não são alocadas.
     /// </summary>
     private sealed class SparseMemory
     {
         private readonly ulong _size;
 
-        private readonly Dictionary<ulong, byte[]> _pages =
-            new();
+        /*
+         * Cada entrada representa uma página realmente
+         * utilizada pelo guest.
+         */
+        private readonly Dictionary<
+            ulong,
+            byte[]> _pages = new();
 
         public SparseMemory(ulong size)
         {
+            if (size == 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(size));
+            }
+
             _size = size;
         }
 
+        /// <summary>
+        /// Lê bytes da memória esparsa.
+        ///
+        /// Páginas que nunca foram escritas
+        /// retornam zero.
+        /// </summary>
         public void Read(
             ulong offset,
             Span<byte> destination)
@@ -370,21 +623,27 @@ public sealed class VirtualMemory : IVirtualMemory
             while (processed < destination.Length)
             {
                 var currentOffset =
-                    offset + (ulong)processed;
+                    offset +
+                    (ulong)processed;
 
                 var pageIndex =
-                    currentOffset / PageSize;
+                    currentOffset /
+                    (ulong)PageSize;
 
                 var pageOffset =
-                    (int)(currentOffset % PageSize);
+                    (int)(
+                        currentOffset %
+                        (ulong)PageSize);
 
                 var available =
-                    PageSize - pageOffset;
+                    PageSize -
+                    pageOffset;
 
                 var count =
                     Math.Min(
                         available,
-                        destination.Length - processed);
+                        destination.Length -
+                        processed);
 
                 if (_pages.TryGetValue(
                         pageIndex,
@@ -400,7 +659,11 @@ public sealed class VirtualMemory : IVirtualMemory
                 }
                 else
                 {
-                    // Página nunca escrita = zero.
+                    /*
+                     * Página nunca utilizada:
+                     * comportamento equivalente a
+                     * memória zerada.
+                     */
                     destination.Slice(
                             processed,
                             count)
@@ -411,6 +674,12 @@ public sealed class VirtualMemory : IVirtualMemory
             }
         }
 
+        /// <summary>
+        /// Escreve bytes na memória esparsa.
+        ///
+        /// Uma nova página só é criada quando
+        /// realmente recebe dados.
+        /// </summary>
         public void Write(
             ulong offset,
             ReadOnlySpan<byte> source)
@@ -424,28 +693,37 @@ public sealed class VirtualMemory : IVirtualMemory
             while (processed < source.Length)
             {
                 var currentOffset =
-                    offset + (ulong)processed;
+                    offset +
+                    (ulong)processed;
 
                 var pageIndex =
-                    currentOffset / PageSize;
+                    currentOffset /
+                    (ulong)PageSize;
 
                 var pageOffset =
-                    (int)(currentOffset % PageSize);
+                    (int)(
+                        currentOffset %
+                        (ulong)PageSize);
 
                 var available =
-                    PageSize - pageOffset;
+                    PageSize -
+                    pageOffset;
 
                 var count =
                     Math.Min(
                         available,
-                        source.Length - processed);
+                        source.Length -
+                        processed);
 
                 if (!_pages.TryGetValue(
                         pageIndex,
                         out var page))
                 {
                     page = new byte[PageSize];
-                    _pages.Add(pageIndex, page);
+
+                    _pages.Add(
+                        pageIndex,
+                        page);
                 }
 
                 source.Slice(
@@ -460,15 +738,24 @@ public sealed class VirtualMemory : IVirtualMemory
             }
         }
 
+        /// <summary>
+        /// Valida uma operação de memória.
+        /// </summary>
         private void ValidateRange(
             ulong offset,
             ulong length)
         {
+            /*
+             * Esta forma evita overflow em:
+             *
+             * offset + length
+             */
             if (offset > _size ||
                 length > _size - offset)
             {
                 throw new ArgumentOutOfRangeException(
-                    nameof(offset));
+                    nameof(offset),
+                    "Memory access is outside the mapped region.");
             }
         }
     }
