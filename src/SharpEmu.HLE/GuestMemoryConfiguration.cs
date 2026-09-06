@@ -5,17 +5,32 @@ namespace SharpEmu.Core.Memory;
 
 public static class GuestMemoryConfiguration
 {
-    // 26 GiB = 27917287424 bytes
+    // 26 GiB
     public const ulong RamSize =
         26UL * 1024UL * 1024UL * 1024UL;
 
+    // 26624 MiB
     public const ulong RamSizeMiB =
-        RamSize / (1024UL * 1024UL);
+        26UL * 1024UL;
 
-    public const ulong RamSizeGiB = 26UL;
-
+    // Número de páginas de 4 KiB
     public const ulong PageSize = 0x1000UL;
 
-    public static ulong PageCount =>
+    public const ulong RamPages =
         RamSize / PageSize;
+
+    public static ulong GetRamSize()
+    {
+        return RamSize;
+    }
+
+    public static ulong GetRamSizeMiB()
+    {
+        return RamSizeMiB;
+    }
+
+    public static ulong GetRamPages()
+    {
+        return RamPages;
+    }
 }
