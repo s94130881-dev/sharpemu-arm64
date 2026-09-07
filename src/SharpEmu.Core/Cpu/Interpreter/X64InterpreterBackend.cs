@@ -1,4 +1,4 @@
-﻿// Copyright (C) 2026 SharpEmu Emulator Project
+// Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using System.Buffers.Binary;
@@ -470,6 +470,98 @@ public sealed class X64InterpreterBackend
             Mnemonic.Setge => ExecuteSetCondition(context, instruction, out failure),
             Mnemonic.Setle => ExecuteSetCondition(context, instruction, out failure),
             Mnemonic.Setg => ExecuteSetCondition(context, instruction, out failure),
+            // Legacy SSE/SSE2 forms. The guest is x86-64 even when the host is ARM64.
+            // Keep these separate from the VEX forms because legacy two-operand
+            // instructions use DEST as the first arithmetic source.
+            Mnemonic.Movups => ExecuteVectorMove(context, instruction, out failure),
+            Mnemonic.Movupd => ExecuteVectorMove(context, instruction, out failure),
+            Mnemonic.Movaps => ExecuteVectorMove(context, instruction, out failure),
+            Mnemonic.Movapd => ExecuteVectorMove(context, instruction, out failure),
+            Mnemonic.Movdqu => ExecuteVectorMove(context, instruction, out failure),
+            Mnemonic.Movdqa => ExecuteVectorMove(context, instruction, out failure),
+            Mnemonic.Movss => ExecuteMoveScalarLegacy(context, instruction, doublePrecision: false, out failure),
+            Mnemonic.Movsd => ExecuteMoveScalarLegacy(context, instruction, doublePrecision: true, out failure),
+            Mnemonic.Movhps => ExecuteVectorMoveHighPackedSingleLegacy(context, instruction, out failure),
+            Mnemonic.Movlps => ExecuteVectorMoveLowPackedSingleLegacy(context, instruction, out failure),
+            Mnemonic.Movhlps => ExecuteMovHlps(context, instruction, out failure),
+            Mnemonic.Movlhps => ExecuteMovLhps(context, instruction, out failure),
+            Mnemonic.Sqrtss => ExecuteSqrt(context, instruction, doublePrecision: false, packed: false, out failure),
+            Mnemonic.Sqrtsd => ExecuteSqrt(context, instruction, doublePrecision: true, packed: false, out failure),
+            Mnemonic.Sqrtps => ExecuteSqrt(context, instruction, doublePrecision: false, packed: true, out failure),
+            Mnemonic.Sqrtpd => ExecuteSqrt(context, instruction, doublePrecision: true, packed: true, out failure),
+            Mnemonic.Rsqrtps => ExecuteReciprocalSqrt(context, instruction, out failure),
+            Mnemonic.Rcpps => ExecuteReciprocal(context, instruction, out failure),
+            Mnemonic.Rsqrtss => ExecuteReciprocalSqrtScalar(context, instruction, out failure),
+            Mnemonic.Rcpss => ExecuteReciprocalScalar(context, instruction, out failure),
+            Mnemonic.Movd => ExecuteVectorMoveD(context, instruction, out failure),
+            Mnemonic.Movq => ExecuteVectorMoveQ(context, instruction, out failure),
+            Mnemonic.Cvtsi2ss => ExecuteConvertIntToScalar(context, instruction, doublePrecision: false, out failure),
+            Mnemonic.Cvtsi2sd => ExecuteConvertIntToScalar(context, instruction, doublePrecision: true, out failure),
+            Mnemonic.Cvttss2si => ExecuteConvertScalarToInt(context, instruction, doublePrecision: false, truncate: true, out failure),
+            Mnemonic.Cvttsd2si => ExecuteConvertScalarToInt(context, instruction, doublePrecision: true, truncate: true, out failure),
+            Mnemonic.Cvtss2si => ExecuteConvertScalarToInt(context, instruction, doublePrecision: false, truncate: false, out failure),
+            Mnemonic.Cvtsd2si => ExecuteConvertScalarToInt(context, instruction, doublePrecision: true, truncate: false, out failure),
+            Mnemonic.Addss => ExecuteScalarArithLegacy(context, instruction, ScalarArithOp.Add, doublePrecision: false, out failure),
+            Mnemonic.Subss => ExecuteScalarArithLegacy(context, instruction, ScalarArithOp.Sub, doublePrecision: false, out failure),
+            Mnemonic.Mulss => ExecuteScalarArithLegacy(context, instruction, ScalarArithOp.Mul, doublePrecision: false, out failure),
+            Mnemonic.Divss => ExecuteScalarArithLegacy(context, instruction, ScalarArithOp.Div, doublePrecision: false, out failure),
+            Mnemonic.Addsd => ExecuteScalarArithLegacy(context, instruction, ScalarArithOp.Add, doublePrecision: true, out failure),
+            Mnemonic.Subsd => ExecuteScalarArithLegacy(context, instruction, ScalarArithOp.Sub, doublePrecision: true, out failure),
+            Mnemonic.Mulsd => ExecuteScalarArithLegacy(context, instruction, ScalarArithOp.Mul, doublePrecision: true, out failure),
+            Mnemonic.Divsd => ExecuteScalarArithLegacy(context, instruction, ScalarArithOp.Div, doublePrecision: true, out failure),
+            Mnemonic.Addps => ExecuteVectorArithLegacy(context, instruction, ScalarArithOp.Add, doublePrecision: false, out failure),
+            Mnemonic.Subps => ExecuteVectorArithLegacy(context, instruction, ScalarArithOp.Sub, doublePrecision: false, out failure),
+            Mnemonic.Mulps => ExecuteVectorArithLegacy(context, instruction, ScalarArithOp.Mul, doublePrecision: false, out failure),
+            Mnemonic.Divps => ExecuteVectorArithLegacy(context, instruction, ScalarArithOp.Div, doublePrecision: false, out failure),
+            Mnemonic.Minps => ExecuteVectorArithLegacy(context, instruction, ScalarArithOp.Min, doublePrecision: false, out failure),
+            Mnemonic.Maxps => ExecuteVectorArithLegacy(context, instruction, ScalarArithOp.Max, doublePrecision: false, out failure),
+            Mnemonic.Addpd => ExecuteVectorArithLegacy(context, instruction, ScalarArithOp.Add, doublePrecision: true, out failure),
+            Mnemonic.Subpd => ExecuteVectorArithLegacy(context, instruction, ScalarArithOp.Sub, doublePrecision: true, out failure),
+            Mnemonic.Mulpd => ExecuteVectorArithLegacy(context, instruction, ScalarArithOp.Mul, doublePrecision: true, out failure),
+            Mnemonic.Divpd => ExecuteVectorArithLegacy(context, instruction, ScalarArithOp.Div, doublePrecision: true, out failure),
+            Mnemonic.Minpd => ExecuteVectorArithLegacy(context, instruction, ScalarArithOp.Min, doublePrecision: true, out failure),
+            Mnemonic.Maxpd => ExecuteVectorArithLegacy(context, instruction, ScalarArithOp.Max, doublePrecision: true, out failure),
+            Mnemonic.Xorps => ExecuteVectorBitwiseLegacy(context, instruction, VectorBitwiseOp.Xor, out failure),
+            Mnemonic.Xorpd => ExecuteVectorBitwiseLegacy(context, instruction, VectorBitwiseOp.Xor, out failure),
+            Mnemonic.Andps => ExecuteVectorBitwiseLegacy(context, instruction, VectorBitwiseOp.And, out failure),
+            Mnemonic.Andpd => ExecuteVectorBitwiseLegacy(context, instruction, VectorBitwiseOp.And, out failure),
+            Mnemonic.Andnps => ExecuteVectorBitwiseLegacy(context, instruction, VectorBitwiseOp.AndNot, out failure),
+            Mnemonic.Andnpd => ExecuteVectorBitwiseLegacy(context, instruction, VectorBitwiseOp.AndNot, out failure),
+            Mnemonic.Pxor => ExecuteVectorBitwiseLegacy(context, instruction, VectorBitwiseOp.Xor, out failure),
+            Mnemonic.Pand => ExecuteVectorBitwiseLegacy(context, instruction, VectorBitwiseOp.And, out failure),
+            Mnemonic.Por => ExecuteVectorBitwiseLegacy(context, instruction, VectorBitwiseOp.Or, out failure),
+            Mnemonic.Pandn => ExecuteVectorBitwiseLegacy(context, instruction, VectorBitwiseOp.AndNot, out failure),
+            Mnemonic.Paddb => ExecuteVectorPackedArithLegacy(context, instruction, PackedArithOp.Add, 8, out failure),
+            Mnemonic.Paddw => ExecuteVectorPackedArithLegacy(context, instruction, PackedArithOp.Add, 16, out failure),
+            Mnemonic.Paddd => ExecuteVectorPackedArithLegacy(context, instruction, PackedArithOp.Add, 32, out failure),
+            Mnemonic.Paddq => ExecuteVectorPackedArithLegacy(context, instruction, PackedArithOp.Add, 64, out failure),
+            Mnemonic.Psubb => ExecuteVectorPackedArithLegacy(context, instruction, PackedArithOp.Sub, 8, out failure),
+            Mnemonic.Psubw => ExecuteVectorPackedArithLegacy(context, instruction, PackedArithOp.Sub, 16, out failure),
+            Mnemonic.Psubd => ExecuteVectorPackedArithLegacy(context, instruction, PackedArithOp.Sub, 32, out failure),
+            Mnemonic.Psubq => ExecuteVectorPackedArithLegacy(context, instruction, PackedArithOp.Sub, 64, out failure),
+            Mnemonic.Pshufd => ExecuteVectorShuffleDwordsLegacy(context, instruction, out failure),
+            Mnemonic.Pshuflw => ExecuteVectorShuffleLowWordsLegacy(context, instruction, out failure),
+            Mnemonic.Pshufhw => ExecuteVectorShuffleHighWordsLegacy(context, instruction, out failure),
+            Mnemonic.Punpcklbw => ExecuteVectorUnpackLegacy(context, instruction, UnpackHalf.Low, 8, out failure),
+            Mnemonic.Punpckhbw => ExecuteVectorUnpackLegacy(context, instruction, UnpackHalf.High, 8, out failure),
+            Mnemonic.Punpcklwd => ExecuteVectorUnpackLegacy(context, instruction, UnpackHalf.Low, 16, out failure),
+            Mnemonic.Punpckhwd => ExecuteVectorUnpackLegacy(context, instruction, UnpackHalf.High, 16, out failure),
+            Mnemonic.Punpckldq => ExecuteVectorUnpackLegacy(context, instruction, UnpackHalf.Low, 32, out failure),
+            Mnemonic.Punpckhdq => ExecuteVectorUnpackLegacy(context, instruction, UnpackHalf.High, 32, out failure),
+            Mnemonic.Punpcklqdq => ExecuteVectorUnpackLegacy(context, instruction, UnpackHalf.Low, 64, out failure),
+            Mnemonic.Punpckhqdq => ExecuteVectorUnpackLegacy(context, instruction, UnpackHalf.High, 64, out failure),
+            Mnemonic.Pshufb => ExecuteVectorShuffleBytesLegacy(context, instruction, out failure),
+            Mnemonic.Pcmpeqb => ExecuteVectorCompareEqualBytesLegacy(context, instruction, out failure),
+            Mnemonic.Pcmpeqd => ExecuteVectorCompareEqualDwordsLegacy(context, instruction, out failure),
+            Mnemonic.Ucomiss => ExecuteFloatCompareLegacy(context, instruction, doublePrecision: false, out failure),
+            Mnemonic.Comiss => ExecuteFloatCompareLegacy(context, instruction, doublePrecision: false, out failure),
+            Mnemonic.Ucomisd => ExecuteFloatCompareLegacy(context, instruction, doublePrecision: true, out failure),
+            Mnemonic.Comisd => ExecuteFloatCompareLegacy(context, instruction, doublePrecision: true, out failure),
+            Mnemonic.Movmskps => ExecuteMoveMask(context, instruction, 4, out failure),
+            Mnemonic.Movmskpd => ExecuteMoveMask(context, instruction, 8, out failure),
+            Mnemonic.Pmovmskb => ExecuteMoveMask(context, instruction, 1, out failure),
+            Mnemonic.Vzeroupper => ExecuteZeroUpper(context, out failure),
+            Mnemonic.Vzeroall => ExecuteZeroAll(context, out failure),
             Mnemonic.Vmovups => ExecuteVectorMove(context, instruction, out failure),
             Mnemonic.Vmovupd => ExecuteVectorMove(context, instruction, out failure),
             Mnemonic.Vmovaps => ExecuteVectorMove(context, instruction, out failure),
@@ -664,6 +756,355 @@ public sealed class X64InterpreterBackend
             Mnemonic.Lzcnt => ExecuteLeadingZeroCount(context, instruction, out failure),
             _ => Unsupported(instruction, out failure),
         };
+    }
+
+    // -------------------------------------------------------------------------
+    // Legacy SSE/SSE2 compatibility layer.
+    //
+    // VEX instructions are normally three-operand. Legacy SSE is two-operand:
+    //   addps xmm0,xmm1  == xmm0 = xmm0 + xmm1
+    // The original backend already implements the arithmetic kernels for VEX;
+    // these small adapters provide the correct legacy operand semantics.
+    // -------------------------------------------------------------------------
+
+    private static bool ExecuteVectorMoveHighPackedSingleLegacy(CpuContext context, in Instruction instruction, out InterpreterFailure failure)
+    {
+        if (instruction.OpCount != 2 || instruction.GetOpKind(0) != OpKind.Register ||
+            !TryGetVectorRegisterInfo(instruction.GetOpRegister(0), out var dst, out _))
+        { failure = InterpreterFailure.Unsupported($"unsupported MOVHPS: {instruction}"); return false; }
+        if (instruction.GetOpKind(1) == OpKind.Memory)
+        {
+            if (!TryGetMemoryAddress(context, instruction, out var address)) { failure=InterpreterFailure.Unsupported("unsupported MOVHPS address"); return false; }
+            Span<byte> tmp=stackalloc byte[8]; if(!TryReadInterpreterMemory(context,address,tmp)){failure=InterpreterFailure.MemoryRead(address,8);return false;}
+            context.GetXmmRegister(dst,out var low,out var high);
+            high=BinaryPrimitives.ReadUInt64LittleEndian(tmp);
+            context.SetXmmRegister(dst,low,high); context.ClearYmmUpper(dst); failure=default; return true;
+        }
+        if(!TryGetVectorRegisterInfo(instruction.GetOpRegister(1),out var src,out _)){failure=InterpreterFailure.Unsupported($"unsupported MOVHPS source: {instruction}");return false;}
+        context.GetXmmRegister(src,out _,out var srcHigh); context.GetXmmRegister(dst,out var dstLow,out _); context.SetXmmRegister(dst,dstLow,srcHigh); context.ClearYmmUpper(dst); failure=default; return true;
+    }
+
+    private static bool ExecuteVectorMoveLowPackedSingleLegacy(CpuContext context, in Instruction instruction, out InterpreterFailure failure)
+    {
+        if (instruction.OpCount != 2 || instruction.GetOpKind(0) != OpKind.Register ||
+            !TryGetVectorRegisterInfo(instruction.GetOpRegister(0), out var dst, out _))
+        {
+            if (instruction.OpCount == 2 && instruction.GetOpKind(0) == OpKind.Memory && instruction.GetOpKind(1) == OpKind.Register && TryGetVectorRegisterInfo(instruction.GetOpRegister(1), out var storeSrc, out _))
+            {
+                if(!TryGetMemoryAddress(context,instruction,out var address)){failure=InterpreterFailure.Unsupported("unsupported MOVLPS store address");return false;}
+                context.GetXmmRegister(storeSrc,out var low,out _); Span<byte> tmp=stackalloc byte[8]; BinaryPrimitives.WriteUInt64LittleEndian(tmp,low); if(!TryWriteInterpreterMemory(context,address,tmp)){failure=InterpreterFailure.MemoryWrite(address,8);return false;} failure=default; return true;
+            }
+            failure=InterpreterFailure.Unsupported($"unsupported MOVLPS: {instruction}"); return false;
+        }
+        if(instruction.GetOpKind(1)==OpKind.Memory)
+        {
+            if(!TryGetMemoryAddress(context,instruction,out var address)){failure=InterpreterFailure.Unsupported("unsupported MOVLPS load address");return false;}
+            Span<byte> tmp=stackalloc byte[8]; if(!TryReadInterpreterMemory(context,address,tmp)){failure=InterpreterFailure.MemoryRead(address,8);return false;}
+            context.GetXmmRegister(dst,out _,out var high); context.SetXmmRegister(dst,BinaryPrimitives.ReadUInt64LittleEndian(tmp),high); context.ClearYmmUpper(dst); failure=default; return true;
+        }
+        if(!TryGetVectorRegisterInfo(instruction.GetOpRegister(1),out var src,out _)){failure=InterpreterFailure.Unsupported($"unsupported MOVLPS source: {instruction}");return false;}
+        context.GetXmmRegister(src,out var srcLow,out _); context.GetXmmRegister(dst,out _,out var dstHigh); context.SetXmmRegister(dst,srcLow,dstHigh); context.ClearYmmUpper(dst); failure=default; return true;
+    }
+
+    private static bool ExecuteMoveScalarLegacy(CpuContext context, in Instruction instruction, bool doublePrecision, out InterpreterFailure failure)
+    {
+        var bytes = doublePrecision ? 8 : 4;
+        if (instruction.GetOpKind(0) == OpKind.Memory)
+        {
+            if (!TryGetVectorRegisterInfo(instruction.GetOpRegister(1), out var src, out _))
+            {
+                failure = InterpreterFailure.Unsupported($"unsupported scalar store: {instruction}");
+                return false;
+            }
+            if (!TryGetMemoryAddress(context, instruction, out var address))
+            {
+                failure = InterpreterFailure.Unsupported("unsupported scalar store address");
+                return false;
+            }
+            Span<byte> tmp = stackalloc byte[16];
+            GetVectorRegister(context, src, 16, tmp);
+            if (!TryWriteInterpreterMemory(context, address, tmp[..bytes]))
+            {
+                failure = InterpreterFailure.MemoryWrite(address, bytes);
+                return false;
+            }
+            failure = default;
+            return true;
+        }
+
+        if (!TryGetVectorRegisterInfo(instruction.GetOpRegister(0), out var dst, out _))
+        {
+            failure = InterpreterFailure.Unsupported($"unsupported scalar destination: {instruction}");
+            return false;
+        }
+
+        if (instruction.GetOpKind(1) == OpKind.Memory)
+        {
+            if (!TryGetMemoryAddress(context, instruction, out var address))
+            {
+                failure = InterpreterFailure.Unsupported("unsupported scalar load address");
+                return false;
+            }
+            Span<byte> tmp = stackalloc byte[16];
+            if (!TryReadInterpreterMemory(context, address, tmp[..bytes]))
+            {
+                failure = InterpreterFailure.MemoryRead(address, bytes);
+                return false;
+            }
+            context.GetXmmRegister(dst, out var oldLow, out var oldHigh);
+            if (doublePrecision)
+                context.SetXmmRegister(dst, BinaryPrimitives.ReadUInt64LittleEndian(tmp), oldHigh);
+            else
+                context.SetXmmRegister(dst, (oldLow & 0xFFFFFFFF00000000UL) | BinaryPrimitives.ReadUInt32LittleEndian(tmp), oldHigh);
+            context.ClearYmmUpper(dst);
+            failure = default;
+            return true;
+        }
+
+        if (!TryGetVectorRegisterInfo(instruction.GetOpRegister(1), out var srcReg, out _))
+        {
+            failure = InterpreterFailure.Unsupported($"unsupported scalar register source: {instruction}");
+            return false;
+        }
+        context.GetXmmRegister(srcReg, out var srcLow, out var srcHigh);
+        context.GetXmmRegister(dst, out var dstLow, out var dstHigh);
+        if (doublePrecision)
+            context.SetXmmRegister(dst, srcLow, dstHigh);
+        else
+            context.SetXmmRegister(dst, (dstLow & 0xFFFFFFFF00000000UL) | (srcLow & 0xFFFFFFFFUL), dstHigh);
+        context.ClearYmmUpper(dst);
+        failure = default;
+        return true;
+    }
+
+    private static bool ExecuteScalarArithLegacy(CpuContext context, in Instruction instruction, ScalarArithOp op, bool doublePrecision, out InterpreterFailure failure)
+    {
+        if (instruction.GetOpKind(0) != OpKind.Register ||
+            !TryGetVectorRegisterInfo(instruction.GetOpRegister(0), out var dst, out _))
+        {
+            failure = InterpreterFailure.Unsupported($"unsupported legacy scalar arithmetic: {instruction}");
+            return false;
+        }
+        context.GetXmmRegister(dst, out var low, out var high);
+        double d;
+        float f;
+        if (doublePrecision)
+        {
+            if (!TryReadScalarDouble(context, instruction, 1, out d, out failure)) return false;
+            var a = BitConverter.UInt64BitsToDouble(low);
+            var r = op switch { ScalarArithOp.Add => a+d, ScalarArithOp.Sub => a-d, ScalarArithOp.Mul => a*d, ScalarArithOp.Div => a/d, ScalarArithOp.Min => EvaluateMin(a,d), ScalarArithOp.Max => EvaluateMax(a,d), _ => a };
+            context.SetXmmRegister(dst, BitConverter.DoubleToUInt64Bits(r), high);
+        }
+        else
+        {
+            if (!TryReadScalarSingle(context, instruction, 1, out f, out failure)) return false;
+            var a = BitConverter.UInt32BitsToSingle((uint)low);
+            var r = op switch { ScalarArithOp.Add => a+f, ScalarArithOp.Sub => a-f, ScalarArithOp.Mul => a*f, ScalarArithOp.Div => a/f, ScalarArithOp.Min => EvaluateMinSingle(a,f), ScalarArithOp.Max => EvaluateMaxSingle(a,f), _ => a };
+            context.SetXmmRegister(dst, (low & 0xFFFFFFFF00000000UL) | BitConverter.SingleToUInt32Bits(r), high);
+        }
+        context.ClearYmmUpper(dst);
+        failure = default;
+        return true;
+    }
+
+    private static bool ExecuteVectorArithLegacy(CpuContext context, in Instruction instruction, ScalarArithOp op, bool doublePrecision, out InterpreterFailure failure)
+    {
+        if (instruction.GetOpKind(0) != OpKind.Register ||
+            !TryGetVectorRegisterInfo(instruction.GetOpRegister(0), out var dst, out var size) ||
+            instruction.OpCount != 2)
+        {
+            failure = InterpreterFailure.Unsupported($"unsupported legacy packed arithmetic: {instruction}");
+            return false;
+        }
+        Span<byte> left = stackalloc byte[32];
+        Span<byte> right = stackalloc byte[32];
+        GetVectorRegister(context, dst, size, left[..size]);
+        if (!TryReadVectorOperand(context, instruction, 1, size, right[..size], out failure)) return false;
+        var elem = doublePrecision ? 8 : 4;
+        Span<byte> result = stackalloc byte[32];
+        for (var i=0; i<size; i+=elem)
+        {
+            if (doublePrecision)
+            {
+                var a=BitConverter.UInt64BitsToDouble(BinaryPrimitives.ReadUInt64LittleEndian(left[i..]));
+                var b=BitConverter.UInt64BitsToDouble(BinaryPrimitives.ReadUInt64LittleEndian(right[i..]));
+                var r=op switch { ScalarArithOp.Add=>a+b, ScalarArithOp.Sub=>a-b, ScalarArithOp.Mul=>a*b, ScalarArithOp.Div=>a/b, ScalarArithOp.Min=>EvaluateMin(a,b), ScalarArithOp.Max=>EvaluateMax(a,b), _=>a };
+                BinaryPrimitives.WriteUInt64LittleEndian(result[i..], BitConverter.DoubleToUInt64Bits(r));
+            }
+            else
+            {
+                var a=BitConverter.UInt32BitsToSingle(BinaryPrimitives.ReadUInt32LittleEndian(left[i..]));
+                var b=BitConverter.UInt32BitsToSingle(BinaryPrimitives.ReadUInt32LittleEndian(right[i..]));
+                var r=op switch { ScalarArithOp.Add=>a+b, ScalarArithOp.Sub=>a-b, ScalarArithOp.Mul=>a*b, ScalarArithOp.Div=>a/b, ScalarArithOp.Min=>EvaluateMinSingle(a,b), ScalarArithOp.Max=>EvaluateMaxSingle(a,b), _=>a };
+                BinaryPrimitives.WriteUInt32LittleEndian(result[i..], BitConverter.SingleToUInt32Bits(r));
+            }
+        }
+        SetVectorRegister(context,dst,result[..size]);
+        failure=default;
+        return true;
+    }
+
+    private static bool ExecuteVectorBitwiseLegacy(CpuContext context, in Instruction instruction, VectorBitwiseOp op, out InterpreterFailure failure)
+    {
+        if (instruction.OpCount != 2 || instruction.GetOpKind(0) != OpKind.Register || !TryGetVectorRegisterInfo(instruction.GetOpRegister(0), out var dst, out var size))
+        { failure=InterpreterFailure.Unsupported($"unsupported legacy bitwise: {instruction}"); return false; }
+        Span<byte> a=stackalloc byte[32]; Span<byte> b=stackalloc byte[32];
+        GetVectorRegister(context,dst,size,a[..size]);
+        if(!TryReadVectorOperand(context,instruction,1,size,b[..size],out failure)) return false;
+        for(int i=0;i<size;i++) a[i]=op switch { VectorBitwiseOp.And=>(byte)(a[i]&b[i]), VectorBitwiseOp.Or=>(byte)(a[i]|b[i]), VectorBitwiseOp.Xor=>(byte)(a[i]^b[i]), VectorBitwiseOp.AndNot=>(byte)(~a[i]&b[i]), _=>a[i] };
+        SetVectorRegister(context,dst,a[..size]); failure=default; return true;
+    }
+
+    private static bool ExecuteVectorPackedArithLegacy(CpuContext context, in Instruction instruction, PackedArithOp op, int elementBits, out InterpreterFailure failure)
+    {
+        if (instruction.OpCount != 2 || instruction.GetOpKind(0) != OpKind.Register || !TryGetVectorRegisterInfo(instruction.GetOpRegister(0), out var dst, out var size))
+        { failure=InterpreterFailure.Unsupported($"unsupported legacy packed integer arithmetic: {instruction}"); return false; }
+        Span<byte> a=stackalloc byte[32]; Span<byte> b=stackalloc byte[32]; Span<byte> r=stackalloc byte[32];
+        GetVectorRegister(context,dst,size,a[..size]); if(!TryReadVectorOperand(context,instruction,1,size,b[..size],out failure)) return false;
+        int n=elementBits/8;
+        for(int i=0;i<size;i+=n) { ulong x=n switch {1=>a[i],2=>BinaryPrimitives.ReadUInt16LittleEndian(a[i..]),4=>BinaryPrimitives.ReadUInt32LittleEndian(a[i..]),_=>BinaryPrimitives.ReadUInt64LittleEndian(a[i..])}; ulong y=n switch {1=>b[i],2=>BinaryPrimitives.ReadUInt16LittleEndian(b[i..]),4=>BinaryPrimitives.ReadUInt32LittleEndian(b[i..]),_=>BinaryPrimitives.ReadUInt64LittleEndian(b[i..])}; ulong z=op==PackedArithOp.Add?x+y:x-y; if(n==1)r[i]=(byte)z; else if(n==2)BinaryPrimitives.WriteUInt16LittleEndian(r[i..],(ushort)z); else if(n==4)BinaryPrimitives.WriteUInt32LittleEndian(r[i..],(uint)z); else BinaryPrimitives.WriteUInt64LittleEndian(r[i..],z); }
+        SetVectorRegister(context,dst,r[..size]); failure=default; return true;
+    }
+
+    private static bool ExecuteVectorShuffleDwordsLegacy(CpuContext context, in Instruction instruction, out InterpreterFailure failure)
+    {
+        if(instruction.OpCount!=3 || instruction.GetOpKind(0)!=OpKind.Register || !TryGetVectorRegisterInfo(instruction.GetOpRegister(0),out var dst,out var size)) { failure=InterpreterFailure.Unsupported($"unsupported PSHUFD: {instruction}"); return false; }
+        Span<byte> src=stackalloc byte[16]; if(!TryReadVectorOperand(context,instruction,1,16,src,out failure)) return false;
+        byte imm=(byte)instruction.GetImmediate(2); Span<byte> r=stackalloc byte[16];
+        for(int i=0;i<4;i++) BinaryPrimitives.WriteUInt32LittleEndian(r[(i*4)..],BinaryPrimitives.ReadUInt32LittleEndian(src[((imm>>(i*2)&3)*4)..]));
+        SetVectorRegister(context,dst,r); failure=default; return true;
+    }
+
+    private static bool ExecuteVectorShuffleLowWordsLegacy(CpuContext context, in Instruction instruction, out InterpreterFailure failure)
+    {
+        if(instruction.OpCount!=3 || instruction.GetOpKind(0)!=OpKind.Register || !TryGetVectorRegisterInfo(instruction.GetOpRegister(0),out var dst,out _)) { failure=InterpreterFailure.Unsupported($"unsupported PSHUFLW: {instruction}"); return false; }
+        Span<byte> v=stackalloc byte[16]; if(!TryReadVectorOperand(context,instruction,1,16,v,out failure)) return false; byte imm=(byte)instruction.GetImmediate(2); Span<byte> r=stackalloc byte[16]; v.CopyTo(r);
+        for(int i=0;i<4;i++) BinaryPrimitives.WriteUInt16LittleEndian(r[(i*2)..],BinaryPrimitives.ReadUInt16LittleEndian(v[(((imm>>(i*2))&3)*2)..]));
+        SetVectorRegister(context,dst,r); failure=default; return true;
+    }
+
+    private static bool ExecuteVectorShuffleHighWordsLegacy(CpuContext context, in Instruction instruction, out InterpreterFailure failure)
+    {
+        if(instruction.OpCount!=3 || instruction.GetOpKind(0)!=OpKind.Register || !TryGetVectorRegisterInfo(instruction.GetOpRegister(0),out var dst,out _)) { failure=InterpreterFailure.Unsupported($"unsupported PSHUFHW: {instruction}"); return false; }
+        Span<byte> v=stackalloc byte[16]; if(!TryReadVectorOperand(context,instruction,1,16,v,out failure)) return false; byte imm=(byte)instruction.GetImmediate(2); Span<byte> r=stackalloc byte[16]; v.CopyTo(r);
+        for(int i=0;i<4;i++) BinaryPrimitives.WriteUInt16LittleEndian(r[(8+i*2)..],BinaryPrimitives.ReadUInt16LittleEndian(v[(8+(((imm>>(i*2))&3)*2))..]));
+        SetVectorRegister(context,dst,r); failure=default; return true;
+    }
+
+    private static bool ExecuteVectorUnpackLegacy(CpuContext context, in Instruction instruction, UnpackHalf half, int elementBits, out InterpreterFailure failure)
+    {
+        if(instruction.OpCount!=2 || instruction.GetOpKind(0)!=OpKind.Register || !TryGetVectorRegisterInfo(instruction.GetOpRegister(0),out var dst,out var size)) { failure=InterpreterFailure.Unsupported($"unsupported legacy unpack: {instruction}"); return false; }
+        Span<byte> left=stackalloc byte[16]; Span<byte> right=stackalloc byte[16]; Span<byte> r=stackalloc byte[16]; GetVectorRegister(context,dst,16,left); if(!TryReadVectorOperand(context,instruction,1,16,right,out failure)) return false;
+        int es=elementBits/8, halfCount=8/es, baseIndex=half==UnpackHalf.High?halfCount:0;
+        for(int i=0;i<halfCount;i++){ int src=(baseIndex+i)*es; left.AsSpan(src,es).CopyTo(r.AsSpan(2*i*es,es)); right.AsSpan(src,es).CopyTo(r.AsSpan((2*i+1)*es,es)); }
+        SetVectorRegister(context,dst,r); failure=default; return true;
+    }
+
+    private static bool ExecuteVectorShuffleBytesLegacy(CpuContext context, in Instruction instruction, out InterpreterFailure failure)
+    {
+        if(instruction.OpCount!=2 || instruction.GetOpKind(0)!=OpKind.Register || !TryGetVectorRegisterInfo(instruction.GetOpRegister(0),out var dst,out _)) { failure=InterpreterFailure.Unsupported($"unsupported PSHUFB: {instruction}"); return false; }
+        Span<byte> src=stackalloc byte[16]; Span<byte> ctl=stackalloc byte[16]; Span<byte> r=stackalloc byte[16]; GetVectorRegister(context,dst,16,src); if(!TryReadVectorOperand(context,instruction,1,16,ctl,out failure)) return false;
+        for(int lane=0;lane<16;lane+=16) for(int i=0;i<16;i++){ byte c=ctl[lane+i]; r[lane+i]=(c&0x80)!=0?(byte)0:src[lane+(c&0x0F)]; }
+        SetVectorRegister(context,dst,r); failure=default; return true;
+    }
+
+    private static bool ExecuteVectorCompareEqualBytesLegacy(CpuContext context, in Instruction instruction, out InterpreterFailure failure)
+    {
+        if(instruction.OpCount!=2 || instruction.GetOpKind(0)!=OpKind.Register || !TryGetVectorRegisterInfo(instruction.GetOpRegister(0),out var dst,out var size)) { failure=InterpreterFailure.Unsupported($"unsupported PCMPEQB: {instruction}"); return false; }
+        Span<byte> a=stackalloc byte[32]; Span<byte> b=stackalloc byte[32]; GetVectorRegister(context,dst,size,a[..size]); if(!TryReadVectorOperand(context,instruction,1,size,b[..size],out failure)) return false; for(int i=0;i<size;i++) a[i]=(byte)(a[i]==b[i]?0xFF:0); SetVectorRegister(context,dst,a[..size]); failure=default; return true;
+    }
+
+    private static bool ExecuteVectorCompareEqualDwordsLegacy(CpuContext context, in Instruction instruction, out InterpreterFailure failure)
+    {
+        if(instruction.OpCount!=2 || instruction.GetOpKind(0)!=OpKind.Register || !TryGetVectorRegisterInfo(instruction.GetOpRegister(0),out var dst,out var size)) { failure=InterpreterFailure.Unsupported($"unsupported PCMPEQD: {instruction}"); return false; }
+        Span<byte> a=stackalloc byte[32]; Span<byte> b=stackalloc byte[32]; GetVectorRegister(context,dst,size,a[..size]); if(!TryReadVectorOperand(context,instruction,1,size,b[..size],out failure)) return false; for(int i=0;i<size;i+=4){ uint x=BinaryPrimitives.ReadUInt32LittleEndian(a[i..]); uint y=BinaryPrimitives.ReadUInt32LittleEndian(b[i..]); BinaryPrimitives.WriteUInt32LittleEndian(a[i..],x==y?uint.MaxValue:0); } SetVectorRegister(context,dst,a[..size]); failure=default; return true;
+    }
+
+    private static bool ExecuteFloatCompareLegacy(CpuContext context, in Instruction instruction, bool doublePrecision, out InterpreterFailure failure)
+    {
+        if(instruction.OpCount!=2 || instruction.GetOpKind(0)!=OpKind.Register || !TryGetVectorRegisterInfo(instruction.GetOpRegister(0),out var leftIndex,out _)) { failure=InterpreterFailure.Unsupported($"unsupported float compare: {instruction}"); return false; }
+        context.GetXmmRegister(leftIndex,out var low,out _); bool unordered; int cmp;
+        if(doublePrecision){ if(!TryReadScalarDouble(context,instruction,1,out var b,out failure)) return false; var a=BitConverter.UInt64BitsToDouble(low); unordered=double.IsNaN(a)||double.IsNaN(b); cmp=unordered?0:a.CompareTo(b); }
+        else { if(!TryReadScalarSingle(context,instruction,1,out var b,out failure)) return false; var a=BitConverter.UInt32BitsToSingle((uint)low); unordered=float.IsNaN(a)||float.IsNaN(b); cmp=unordered?0:a.CompareTo(b); }
+        const ulong CF=1UL, PF=1UL<<2, ZF=1UL<<6, SF=1UL<<7, OF=1UL<<11, AF=1UL<<4;
+        context.Rflags &= ~(CF|PF|ZF|SF|OF|AF); if(unordered) context.Rflags|=CF|PF|ZF; else if(cmp<0) context.Rflags|=CF; else if(cmp==0) context.Rflags|=ZF; failure=default; return true;
+    }
+
+    private static bool ExecuteMoveMask(CpuContext context, in Instruction instruction, int elementBytes, out InterpreterFailure failure)
+    {
+        if(instruction.OpCount!=2 || instruction.GetOpKind(0)!=OpKind.Register || !TryGetVectorRegisterInfo(instruction.GetOpRegister(1),out var src,out var size)) { failure=InterpreterFailure.Unsupported($"unsupported movemask: {instruction}"); return false; }
+        context.GetXmmRegister(src,out var low,out var high); ulong mask=0; if(elementBytes==1){ for(int i=0;i<16;i++){ ulong q=i<8?low:high; if(((q>>((i&7)*8+7))&1)!=0) mask|=1UL<<i; }} else if(elementBytes==4){ for(int i=0;i<4;i++){ ulong q=i<2?low:high; int lane=i&1; if(((q>>(lane*32+31))&1)!=0) mask|=1UL<<i; }} else { for(int i=0;i<2;i++){ ulong q=i==0?low:high; if((q>>63)!=0) mask|=1UL<<i; }}
+        return TryWriteOperand(context,instruction,0,mask,GetOperandBitSize(instruction,0),out failure);
+    }
+
+    private static bool ExecuteZeroUpper(CpuContext context, out InterpreterFailure failure)
+    {
+        for (var i = 0; i < 16; i++) context.ClearYmmUpper(i);
+        failure = default;
+        return true;
+    }
+
+    private static bool ExecuteZeroAll(CpuContext context, out InterpreterFailure failure)
+    {
+        for (var i = 0; i < 16; i++) context.SetYmmRegister(i, 0, 0, 0, 0);
+        failure = default;
+        return true;
+    }
+
+    private static bool ExecuteMovHlps(CpuContext context, in Instruction instruction, out InterpreterFailure failure)
+    {
+        if (instruction.OpCount != 2 || instruction.GetOpKind(0) != OpKind.Register || instruction.GetOpKind(1) != OpKind.Register ||
+            !TryGetVectorRegisterInfo(instruction.GetOpRegister(0), out var dst, out _) ||
+            !TryGetVectorRegisterInfo(instruction.GetOpRegister(1), out var src, out _))
+        { failure=InterpreterFailure.Unsupported($"unsupported MOVHLPS: {instruction}"); return false; }
+        context.GetXmmRegister(src,out _,out var srcHigh); context.GetXmmRegister(dst,out var dstLow,out _); context.SetXmmRegister(dst,srcHigh,dstLow); context.ClearYmmUpper(dst); failure=default; return true;
+    }
+
+    private static bool ExecuteMovLhps(CpuContext context, in Instruction instruction, out InterpreterFailure failure)
+    {
+        if (instruction.OpCount != 2 || instruction.GetOpKind(0) != OpKind.Register || instruction.GetOpKind(1) != OpKind.Register ||
+            !TryGetVectorRegisterInfo(instruction.GetOpRegister(0), out var dst, out _) ||
+            !TryGetVectorRegisterInfo(instruction.GetOpRegister(1), out var src, out _))
+        { failure=InterpreterFailure.Unsupported($"unsupported MOVLHPS: {instruction}"); return false; }
+        context.GetXmmRegister(src,out var srcLow,out _); context.GetXmmRegister(dst,out var dstLow,out _); context.SetXmmRegister(dst,dstLow,srcLow); context.ClearYmmUpper(dst); failure=default; return true;
+    }
+
+    private static bool ExecuteSqrt(CpuContext context, in Instruction instruction, bool doublePrecision, bool packed, out InterpreterFailure failure)
+    {
+        if (instruction.OpCount != 2 || instruction.GetOpKind(0) != OpKind.Register ||
+            !TryGetVectorRegisterInfo(instruction.GetOpRegister(0), out var dst, out var size))
+        { failure=InterpreterFailure.Unsupported($"unsupported SQRT: {instruction}"); return false; }
+        var elem=doublePrecision?8:4;
+        if(!packed) size=elem;
+        Span<byte> src=stackalloc byte[32]; Span<byte> r=stackalloc byte[32];
+        if(!TryReadVectorOperand(context,instruction,1,size,src[..size],out failure)) return false;
+        for(int i=0;i<size;i+=elem){ if(doublePrecision){var v=BitConverter.UInt64BitsToDouble(BinaryPrimitives.ReadUInt64LittleEndian(src[i..])); BinaryPrimitives.WriteUInt64LittleEndian(r[i..],BitConverter.DoubleToUInt64Bits(Math.Sqrt(v)));} else {var v=BitConverter.UInt32BitsToSingle(BinaryPrimitives.ReadUInt32LittleEndian(src[i..])); BinaryPrimitives.WriteUInt32LittleEndian(r[i..],BitConverter.SingleToUInt32Bits(MathF.Sqrt(v)));}}
+        if(!packed){ context.GetXmmRegister(dst,out var oldLow,out var oldHigh); if(doublePrecision) context.SetXmmRegister(dst,BinaryPrimitives.ReadUInt64LittleEndian(r),oldHigh); else context.SetXmmRegister(dst,(oldLow&0xFFFFFFFF00000000UL)|BinaryPrimitives.ReadUInt32LittleEndian(r),oldHigh); context.ClearYmmUpper(dst); }
+        else SetVectorRegister(context,dst,r[..size]);
+        failure=default; return true;
+    }
+
+    private static bool ExecuteReciprocalSqrt(CpuContext context, in Instruction instruction, out InterpreterFailure failure)
+        => ExecuteFloatUnaryPacked(context,instruction,reciprocalSqrt:true,out failure);
+    private static bool ExecuteReciprocal(CpuContext context, in Instruction instruction, out InterpreterFailure failure)
+        => ExecuteFloatUnaryPacked(context,instruction,reciprocalSqrt:false,out failure);
+    private static bool ExecuteReciprocalSqrtScalar(CpuContext context, in Instruction instruction, out InterpreterFailure failure)
+        => ExecuteFloatUnaryScalar(context,instruction,reciprocalSqrt:true,out failure);
+    private static bool ExecuteReciprocalScalar(CpuContext context, in Instruction instruction, out InterpreterFailure failure)
+        => ExecuteFloatUnaryScalar(context,instruction,reciprocalSqrt:false,out failure);
+
+    private static bool ExecuteFloatUnaryPacked(CpuContext context, in Instruction instruction, bool reciprocalSqrt, out InterpreterFailure failure)
+    {
+        if(instruction.OpCount!=2 || instruction.GetOpKind(0)!=OpKind.Register || !TryGetVectorRegisterInfo(instruction.GetOpRegister(0),out var dst,out var size)){failure=InterpreterFailure.Unsupported($"unsupported packed reciprocal: {instruction}");return false;}
+        Span<byte> src=stackalloc byte[32]; Span<byte> r=stackalloc byte[32]; if(!TryReadVectorOperand(context,instruction,1,size,src[..size],out failure))return false;
+        for(int i=0;i<size;i+=4){float v=BitConverter.UInt32BitsToSingle(BinaryPrimitives.ReadUInt32LittleEndian(src[i..])); float x=reciprocalSqrt?1f/MathF.Sqrt(v):1f/v; BinaryPrimitives.WriteUInt32LittleEndian(r[i..],BitConverter.SingleToUInt32Bits(x));}
+        SetVectorRegister(context,dst,r[..size]); failure=default;return true;
+    }
+
+    private static bool ExecuteFloatUnaryScalar(CpuContext context, in Instruction instruction, bool reciprocalSqrt, out InterpreterFailure failure)
+    {
+        if(instruction.OpCount!=2 || instruction.GetOpKind(0)!=OpKind.Register || !TryGetVectorRegisterInfo(instruction.GetOpRegister(0),out var dst,out _)){failure=InterpreterFailure.Unsupported($"unsupported scalar reciprocal: {instruction}");return false;}
+        context.GetXmmRegister(dst,out var low,out var high); if(!TryReadScalarSingle(context,instruction,1,out var v,out failure))return false; float x=reciprocalSqrt?1f/MathF.Sqrt(v):1f/v; context.SetXmmRegister(dst,(low&0xFFFFFFFF00000000UL)|BitConverter.SingleToUInt32Bits(x),high); context.ClearYmmUpper(dst); failure=default;return true;
     }
 
     private static bool ExecuteMove(CpuContext context, in Instruction instruction, out InterpreterFailure failure)
@@ -1352,33 +1793,40 @@ public sealed class X64InterpreterBackend
         bool doublePrecision,
         out InterpreterFailure failure)
     {
+        // Legacy: cvtsi2ss xmm, r/m32 and cvtsi2sd xmm, r/m32/r/m64.
+        // VEX:    vcvtsi2ss xmm, xmm, r/m32 and vcvtsi2sd xmm, xmm, r/m32/r/m64.
         if (instruction.GetOpKind(0) != OpKind.Register ||
-            !TryGetVectorRegisterInfo(instruction.GetOpRegister(0), out var destinationIndex, out _) ||
-            !TryGetVectorRegisterInfo(instruction.GetOpRegister(1), out var mergeIndex, out _))
+            !TryGetVectorRegisterInfo(instruction.GetOpRegister(0), out var destinationIndex, out _))
         {
-            failure = InterpreterFailure.Unsupported($"unsupported scalar int-to-float operands: {instruction}");
+            failure = InterpreterFailure.Unsupported($"unsupported scalar int-to-float destination: {instruction}");
             return false;
         }
 
-        var sourceBits = GetOperandBitSize(instruction, 2);
-        if (!TryReadOperand(context, instruction, 2, sourceBits, out var rawValue, out failure))
-        {
+        var sourceIndex = instruction.OpCount == 2 ? 1 : 2;
+        var sourceBits = GetOperandBitSize(instruction, sourceIndex);
+        if (!TryReadOperand(context, instruction, sourceIndex, sourceBits, out var rawValue, out failure))
             return false;
-        }
 
         var signedValue = sourceBits == 64 ? (long)rawValue : (int)(uint)rawValue;
-        context.GetXmmRegister(mergeIndex, out var mergeLow, out var mergeHigh);
-
-        ulong newLow;
-        if (doublePrecision)
+        ulong mergeLow = 0;
+        ulong mergeHigh = 0;
+        if (instruction.OpCount == 3)
         {
-            newLow = BitConverter.DoubleToUInt64Bits(signedValue);
+            if (!TryGetVectorRegisterInfo(instruction.GetOpRegister(1), out var mergeIndex, out _))
+            {
+                failure = InterpreterFailure.Unsupported($"unsupported scalar int-to-float merge operand: {instruction}");
+                return false;
+            }
+            context.GetXmmRegister(mergeIndex, out mergeLow, out mergeHigh);
         }
         else
         {
-            var floatBits = (ulong)BitConverter.SingleToUInt32Bits((float)signedValue);
-            newLow = (mergeLow & 0xFFFFFFFF00000000UL) | floatBits;
+            context.GetXmmRegister(destinationIndex, out mergeLow, out mergeHigh);
         }
+
+        ulong newLow = doublePrecision
+            ? BitConverter.DoubleToUInt64Bits(signedValue)
+            : (mergeLow & 0xFFFFFFFF00000000UL) | BitConverter.SingleToUInt32Bits((float)signedValue);
 
         context.SetXmmRegister(destinationIndex, newLow, mergeHigh);
         context.ClearYmmUpper(destinationIndex);
@@ -2751,6 +3199,7 @@ public sealed class X64InterpreterBackend
                 VectorBitwiseOp.And => (byte)(lhs[i] & rhs[i]),
                 VectorBitwiseOp.Or => (byte)(lhs[i] | rhs[i]),
                 VectorBitwiseOp.AndNot => (byte)(~lhs[i] & rhs[i]),
+                VectorBitwiseOp.Xor => (byte)(lhs[i] ^ rhs[i]),
                 _ => lhs[i],
             };
         }
@@ -4405,6 +4854,7 @@ public sealed class X64InterpreterBackend
     {
         And,
         Or,
+        Xor,
         AndNot,
     }
 
